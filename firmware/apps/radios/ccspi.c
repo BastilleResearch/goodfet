@@ -575,11 +575,22 @@ void ccspi_handle_fn( uint8_t const app,
         SETSS;
         while(!SFD);        // Wait for TX to complete
         while(SFD);
-        msdelay(1);         // 1ms is too long, but delay_us is finnicky.  This will catch a retry.
+        msdelay(1);         // TODO reading RXFIFO may be just right... 1ms is too long, but delay_us is finnicky.  This will catch a retry.
         //delay_us(400);  // data rate 32us/byte, jam kicks in around ~7th byte of 12 byte long MPDU
         //Flush TX buffer.
         CLRSS;
         ccspitrans8(0x09);  //SFLUSHTX
+        SETSS;
+
+        //Get the beginning of the jammed packet -- seqnum required to forge ACK
+        CLRSS;
+        ccspitrans8(CCSPI_RXFIFO | 0x40);
+        for(i=0;i<4;i++)
+            cmddata[i]=ccspitrans8(0xde);
+        SETSS;
+        //Flush RX buffer.
+        CLRSS;
+        ccspitrans8(0x08);  //SFLUSHRX
         SETSS;
 
         //Create the forged ACK packet
