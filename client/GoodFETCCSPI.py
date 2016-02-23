@@ -254,6 +254,14 @@ class GoodFETCCSPI(GoodFET):
         print "Got:", data, "and", self.data
         return;
 
+    #def RF_reflexjam_indirect(self,panid,lockid,coordid):
+    def RF_reflexjam_indirect(self):
+        data = "";
+        #data = [panid&0xffff,lockid&0xffff,coordid&0xffff];
+        self.writecmd(self.CCSPIAPP,0xA2,len(data),data);
+        print "Got:", data, "and", self.data
+        return;
+
     def RF_modulated_spectrum(self):
         """Hold a carrier wave on the present frequency."""
         # print "Don't know how to hold a carrier.";

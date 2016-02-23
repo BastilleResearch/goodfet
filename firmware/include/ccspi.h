@@ -34,6 +34,8 @@
 #define CCSPI_REFLEX 0xA0
 //Reflexive jam that sends a forged ACK frame if one was requested
 #define CCSPI_REFLEX_AUTOACK 0xA1
+//Reflexive jam that sends a forged ACK frame and indirect data transfer response
+#define CCSPI_REFLEX_INDIRECT 0xA2
 
 
 //Register definitions might go here, at least for buffers.

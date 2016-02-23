@@ -226,11 +226,11 @@ board = None
 # The following table is used for translating a board name into the .hex
 # filename that should be downloaded fromweb.  
 BOARDS = {
-    #'apimote': "apimote1",	# .hex not uploaded yet
-    #'apimote1': "apimote1",
-    #'apimote2': "apimote2",
-    #'apimote3': "apimote2",
-    #'apimote4': "apimote2",
+    'apimote': "apimote1",	# .hex not uploaded yet
+    'apimote1': "apimote1",
+    'apimote2': "apimote2",
+    'apimote3': "apimote2",
+    'apimote4': "apimote2",
     'facedancer10': "facedancer10",
     'facedancer11': "facedancer11",
     'facedancer20': "facedancer20",
