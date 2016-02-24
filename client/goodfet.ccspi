@@ -61,7 +61,6 @@ if(len(sys.argv)==1):
     
     print "\n%s txtoscount [-i|-r]   TinyOS BlinkToLED" % sys.argv[0];
     print "%s reflexjam [channel=11] [delay=0]" % sys.argv[0];
-    print "%s reflexjamindirect [channel=11] [delay=0]" % sys.argv[0];
     
     print "\n%s txpiptest" % sys.argv[0];
     print "%s txpipscapy" % sys.argv[0];
@@ -98,7 +97,7 @@ if(sys.argv[1]=="modulated_spectrum"):
     while(1):
         time.sleep(1);
 
-if(sys.argv[1]=="reflexjam" or sys.argv[1]=="reflexjamack" or sys.argv[1]=="reflexjamindirect"):
+if(sys.argv[1]=="reflexjam" or sys.argv[1]=="reflexjamack"):
     #Setup the radio to listen promiscously on a frequency
     client.RF_promiscuity(1);
     client.RF_autocrc(0);
@@ -123,8 +122,6 @@ if(sys.argv[1]=="reflexjam" or sys.argv[1]=="reflexjamack" or sys.argv[1]=="refl
         client.RF_reflexjam(duration);
     elif sys.argv[1]=="reflexjamack":
         client.RF_reflexjam_autoack();
-    elif sys.argv[1]=="reflexjamindirect":
-        client.RF_reflexjam_indirect();
 
 if(sys.argv[1]=="info"):
     print "Found   %s" % client.identstr();

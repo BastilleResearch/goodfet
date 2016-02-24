@@ -254,12 +254,11 @@ class GoodFETCCSPI(GoodFET):
         print "Got:", data, "and", self.data
         return;
 
-    #def RF_reflexjam_indirect(self,panid,lockid,coordid):
-    def RF_reflexjam_indirect(self):
-        data = "";
-        #data = [panid&0xffff,lockid&0xffff,coordid&0xffff];
-        self.writecmd(self.CCSPIAPP,0xA2,len(data),data);
-        print "Got:", data, "and", self.data
+    def RF_reflexjam_indirect(self,packet):
+        """Pre-loads an indirect data request response in the device.
+           Places device into reflexive jamming mode; serves forged
+           frame pending ACKs and the preloaded indirect response."""
+        self.writecmd(self.CCSPIAPP,0xA2,len(packet),packet);
         return;
 
     def RF_modulated_spectrum(self):

