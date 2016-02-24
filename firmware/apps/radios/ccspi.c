@@ -599,18 +599,15 @@ void ccspi_handle_fn( uint8_t const app,
         cmddata[2] = 0x00;  //second byte of FCF
         //[3] is already filled with the sequence number
         long crc = 0;
-        long q = 0;
-        char c;
         for(i=1;i<4;i++) {
-            c = cmddata[i];
-            q = (crc ^ c) & 0x0f;
+            char c = cmddata[i];
+            long q = (crc ^ c) & 0x0f;
             crc = (crc >> 4) ^ (q * 0x1081);
             q = (crc ^ (c >> 4)) & 0xf;
             crc = (crc >> 4) ^ (q * 0x1081);
         }
-        crc = (char)crc << 8 | (char)(crc >> 8);
-        cmddata[4] = (crc >> 8) & 0xFF;
-        cmddata[5] = crc & 0xFF;
+        cmddata[4] = crc & 0xFF;
+        cmddata[5] = (crc >> 8) & 0xFF;
 
         //Load the forged ACK packet
         CLRSS;
