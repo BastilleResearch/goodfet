@@ -594,25 +594,28 @@ void ccspi_handle_fn( uint8_t const app,
         SETSS;
 
         //Create the forged ACK packet
-        cmddata[0] = 6;     //length of ack frame plus length
+        cmddata[0] = 5;     //length of ack frame, omitting length
         cmddata[1] = 0x12;  //first byte of FCF -- 0x1X is frame pending flag
         cmddata[2] = 0x00;  //second byte of FCF
         //[3] is already filled with the sequence number
-        int crc = 0;
+        long crc = 0;
+        long q = 0;
+        char c;
         for(i=1;i<4;i++) {
-            int c = cmddata[i];
-            int q = (crc ^ c) & 15;   		//Do low-order 4 bits
-            crc = (crc / 16) ^ (q * 4225);
-            q = (crc ^ (c / 16)) & 15;		//And high 4 bits
-            crc = (crc / 16) ^ (q * 4225);
+            c = cmddata[i];
+            q = (crc ^ c) & 0x0f;
+            crc = (crc >> 4) ^ (q * 0x1081);
+            q = (crc ^ (c >> 4)) & 0xf;
+            crc = (crc >> 4) ^ (q * 0x1081);
         }
-        cmddata[4] = crc & 0xFF;
-        cmddata[5] = (crc >> 8) & 0xFF;
+        crc = (char)crc << 8 | (char)(crc >> 8);
+        cmddata[4] = (crc >> 8) & 0xFF;
+        cmddata[5] = crc & 0xFF;
 
         //Load the forged ACK packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        for(i=0;i<cmddata[0];i++)
+        for(i=0;i<cmddata[0]+4;i++)      // Send extras
           ccspitrans8(cmddata[i]);
         SETSS;
         //Transmit the forged ACK packet
