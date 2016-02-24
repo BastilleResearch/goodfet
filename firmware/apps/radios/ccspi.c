@@ -583,8 +583,11 @@ void ccspi_handle_fn( uint8_t const app,
         SETSS;
         while(!SFD);        // Wait for TX to complete
         while(SFD);
-        msdelay(1);         // TODO reading RXFIFO may be just right... 1ms is too long, but delay_us is finnicky.  This will catch a retry.
-        //delay_us(400);  // data rate 32us/byte, jam kicks in around ~7th byte of 12 byte long MPDU
+
+        // SPI transactions may be just right amount of delay for the ACK...
+        // (1/115200)* 8+1+1 * (4 RXFIFO + 5 TXFIFO) = ~780us, vs 864us ACK timeout
+        //msdelay(1);
+        //delay_us(400);  // wait to prep ack. data rate 32us/byte, jam kicks in around ~7th byte of 12 byte long MPDU
         //Flush TX buffer.
         CLRSS;
         ccspitrans8(0x09);  //SFLUSHTX
@@ -623,7 +626,7 @@ void ccspi_handle_fn( uint8_t const app,
         //Load the forged ACK packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        for(i=0;(i<pktbuf[0]+4) && (i<INDBUFLEN);i++)      // Send extras
+        for(i=0;(i<pktbuf[0]+1) && (i<INDBUFLEN);i++)      // Send extras
           ccspitrans8(pktbuf[i]);
         SETSS;
         //Transmit the forged ACK packet
@@ -633,7 +636,7 @@ void ccspi_handle_fn( uint8_t const app,
         SETSS;
         while(!SFD);        // Wait for TX to complete
         while(SFD);
-        msdelay(100);       // MAGIC arbitrary delay to prevent stepping on ack: TODO shorten appropriately
+        msdelay(100);       // MAGIC arbitrary delay before response frame: TODO shorten appropriately
         //msdelay(1000);
         //Flush TX buffer
         CLRSS;
