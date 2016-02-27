@@ -214,6 +214,22 @@ u8 ccspi_regread(u8 reg, u8 *buf, int len){
   return reg;//status
 }
 
+void cc2420_reset(void){
+    //Flush CC2420 RXFIFO and TXFIFO
+    CLRSS;
+    ccspitrans8(0x08);  //SFLUSHRX
+    SETSS;
+    CLRSS;
+    ccspitrans8(0x09);  //SFLUSHTX
+    SETSS;
+
+    //Turn off yellow and green LEDs
+    PLEDDIR |= PLEDPIN;
+    PLEDOUT &= ~PLEDPIN;
+    PLED2DIR |= PLED2PIN;
+    PLED2OUT &= ~PLED2PIN;
+}
+
 //! Handles a Chipcon SPI command.
 void ccspi_handle_fn( uint8_t const app,
 		      uint8_t const verb,
@@ -582,7 +598,12 @@ void ccspi_handle_fn( uint8_t const app,
 
 //DATA REQ 0
         //Wait until a packet is received
-        while(!SFD);
+        while(!SFD && !(UC1IFG & UCA1RXIFG));
+        //Hack to crash back to main loop if serial RX received from client
+        if (UC1IFG & UCA1RXIFG) {
+            cc2420_reset();
+            return;
+        }
         //Turn on LED 2 (green) as signal
 	    PLED2DIR |= PLED2PIN;
 	    PLED2OUT &= ~PLED2PIN;
@@ -604,7 +625,12 @@ void ccspi_handle_fn( uint8_t const app,
         
 // DATA REQ 1
         //Wait for SFD to be received
-        while(!SFD);
+        while(!SFD && !(UC1IFG & UCA1RXIFG));
+        //Hack to crash back to main loop if serial RX received from client
+        if (UC1IFG & UCA1RXIFG) {
+            cc2420_reset();
+            return;
+        }
         //Jam using the same sequence used to jam DATA REQ 0
         CLRSS;
         ccspitrans8(0x04);  //STXON
@@ -646,8 +672,12 @@ void ccspi_handle_fn( uint8_t const app,
 
 // DATA REQ 2
         //Wait for SFD to be received
-        while(!SFD);
-
+        while(!SFD && !(UC1IFG & UCA1RXIFG));
+        //Hack to crash back to main loop if serial RX received from client
+        if (UC1IFG & UCA1RXIFG) {
+            cc2420_reset();
+            return;
+        }
         //Load the forged ACK packet
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
