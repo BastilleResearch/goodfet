@@ -564,6 +564,12 @@ void ccspi_handle_fn( uint8_t const app,
 //  [0]:       0x00: Loops forever; any other value: Oneshot mode
 //  [1]:       MAC frame length (PHY PDU)
 //  [2:[1]-1]: Staged frame to be injected
+//LED Description
+//  Yellow LED: ON:  Indicates the device is in the indirect injection mode.
+//              OFF: Turns off when the device exits this mode and returns to idle.
+//  Green LED:  ON:  Indicates that the jamming/injection sequence is in progress.
+//              OFF: Indicates that the device is waiting for a transmission to begin the sequence.
+#if 0 // DEBUG
     if (cmddata[0] == 0x00) {
         debugstr("Indirect data forging until reset.");
     } else {
@@ -574,9 +580,10 @@ void ccspi_handle_fn( uint8_t const app,
         itoa(cmddata[i], byte, 16);
         debugstr(byte);
     }
+#endif
     txdata(app, verb, len);
     do {  // Run at least once; will look forever if specified (byte 0 of RF_reflexjam_indirect(string))
-        #define INDBUFLEN 10
+        #define INDBUFLEN 10   // MAGIC
         char pktbuf[INDBUFLEN];
         //char rxfcf0;
         //Has there been an overflow in the RX buffer?
@@ -589,7 +596,7 @@ void ccspi_handle_fn( uint8_t const app,
 
         //Preload jamming sequence
         pktbuf[0] = 0x04;
-        pktbuf[1] = 0x01;
+        pktbuf[1] = 0x01;  // 0x0801 resembles a standard 802.15.4 FCF
         pktbuf[2] = 0x08;
         pktbuf[3] = 0xff;
         pktbuf[4] = 0xff;
@@ -653,6 +660,7 @@ void ccspi_handle_fn( uint8_t const app,
             pktbuf[i]=ccspitrans8(0xde);
         SETSS;
 
+        // Possible future work: screen whether to fire based on frame_pending being set
         //save part of FCF, later will use 0x1X frame pending flag to determine whether to send
         //rxfcf0 = pktbuf[1];
 
